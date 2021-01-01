@@ -1,0 +1,54 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+package maildir
+
+import (
+	"os"
+	"path/filepath"
+)
+
+type Article struct {
+	file *os.File
+	d    Maildir
+	key  string
+}
+
+func (a Article) Write(p []byte) (int, error) {
+	return a.file.Write(p)
+}
+
+func (a Article) Close() error {
+	err := a.file.Close()
+	if err != nil {
+		return err
+	}
+
+	var (
+		t = filepath.Join(string(a.d.Dir), "tmp", a.key)
+		n = filepath.Join(string(a.d.Dir), "new", a.key)
+	)
+
+	if err := os.Link(t, n); err != nil {
+		return err
+	}
+
+	if err := os.Remove(t); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (a Article) Abort() error {
+	if err := a.file.Close(); err != nil {
+		return err
+	}
+
+	if err := os.Remove(filepath.Join(string(a.d.Dir), "tmp", a.key)); err != nil {
+		return err
+	}
+
+	return nil
+}
