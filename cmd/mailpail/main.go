@@ -153,43 +153,33 @@ func main() {
 	}
 
 	for _, item := range inbox {
-		diff, err := api.Diff(ctx, item.To.Repository.Project.Key, item.To.Repository.Slug, item.Id)
-		if err != nil {
-			fmt.Printf("error fetching diff: %s\n", err)
-			continue
-		}
-
-		article, err := createMailForItem(item, diff)
-		if err != nil {
-			fmt.Printf("error creating article: %s\n", err)
-			continue
-
-		}
-
 		existing, err := dir.Filename(inboxItemKeyFunc(item))
-		switch {
-		case err != nil && err.(*maildir.KeyError).N == 0:
+
+		if err != nil && err.(*maildir.KeyError).N != 0 {
+			fmt.Printf("error finding existing pr mails: %s\n", err)
+			continue
+		}
+
+		if needsReviewArticle(item, existing) {
+			diff, err := api.Diff(ctx, item.To.Repository.Project.Key, item.To.Repository.Slug, item.Id)
+			if err != nil {
+				fmt.Printf("error fetching diff: %s\n", err)
+				continue
+			}
+
+			article, err := createMailForItem(item, diff)
+			if err != nil {
+				fmt.Printf("error creating article: %s\n", err)
+				continue
+			}
+
+			if existing != "" {
+				os.Remove(existing)
+			}
+
 			if err := writeArticle(dir, inboxItemKeyFunc(item), article); err != nil {
 				fmt.Printf("error writing article: %s\n", err)
 				continue
-			}
-		case err != nil:
-			fmt.Printf("error finding existing pr mails: %s\n", err)
-			continue
-		case existing != "":
-			hdrs, err := headers(existing)
-			if err != nil {
-				fmt.Printf("error loading headers: %s\n", err)
-			}
-
-			version := hdrs.Get("X-Bitbucket-Version")
-			if version != strconv.FormatInt(int64(item.Version), 10) {
-				os.Remove(existing)
-
-				if err := writeArticle(dir, inboxItemKeyFunc(item), article); err != nil {
-					fmt.Printf("error writing article: %s\n", err)
-					continue
-				}
 			}
 		}
 
@@ -238,4 +228,18 @@ func main() {
 			}
 		}
 	}
+}
+
+func needsReviewArticle(item bitbucket.InboxPullRequest, existing string) bool {
+	if existing == "" {
+		return true
+	}
+	hdrs, err := headers(existing)
+	if err != nil {
+		return true
+	}
+
+	version := hdrs.Get("X-Bitbucket-Version")
+
+	return version != strconv.FormatInt(int64(item.Version), 10)
 }
