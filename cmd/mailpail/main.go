@@ -128,21 +128,28 @@ func writeArticle(dir maildir.Maildir, key string, article []byte) error {
 func main() {
 	ctx := context.Background()
 
-	client := http.DefaultClient
-	endpoint := os.Getenv("BBAPI")
-	token := os.Getenv("BBPAT")
-	directory := "maildir/bitbucket"
+	conf, err := LoadUserConfig()
+	if err != nil {
+		fmt.Printf("unable to load config file: %s\n", err)
+		os.Exit(1)
+	}
 
-	api := bitbucket.New(client, endpoint, token)
+	token, err := conf.Token()
+	if err != nil {
+		fmt.Printf("unable to load token: %s\n", err)
+		os.Exit(1)
+	}
 
-	dir := maildir.New(directory)
-	os.MkdirAll(filepath.Join(directory, "tmp"), 0744)
-	os.MkdirAll(filepath.Join(directory, "cur"), 0744)
-	os.MkdirAll(filepath.Join(directory, "new"), 0744)
+	api := bitbucket.New(http.DefaultClient, conf.API.Endpoint, token)
+
+	dir := maildir.New(conf.Maildir)
+	os.MkdirAll(filepath.Join(conf.Maildir, "tmp"), 0744)
+	os.MkdirAll(filepath.Join(conf.Maildir, "cur"), 0744)
+	os.MkdirAll(filepath.Join(conf.Maildir, "new"), 0744)
 
 	inbox, err := api.Inbox(ctx)
 	if err != nil {
-		fmt.Printf("error fetching inbox: %s", err)
+		fmt.Printf("error fetching inbox: %s\n", err)
 	}
 
 	for _, item := range inbox {
