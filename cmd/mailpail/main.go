@@ -125,6 +125,15 @@ func writeArticle(dir maildir.Maildir, key string, article []byte) error {
 	return nil
 }
 
+type UATransport struct {
+	rt http.RoundTripper
+}
+
+func (u *UATransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	req.Header.Set("User-Agent", "mailpail (github.com/terinjokes/mailpail)")
+	return u.rt.RoundTrip(req)
+}
+
 func main() {
 	ctx := context.Background()
 
@@ -140,7 +149,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	api := bitbucket.New(http.DefaultClient, conf.API.Endpoint, token)
+	c := &http.Client{
+		Transport: &UATransport{rt: http.DefaultTransport},
+	}
+	api := bitbucket.New(c, conf.API.Endpoint, token)
 
 	dir := maildir.New(conf.Maildir)
 	os.MkdirAll(filepath.Join(conf.Maildir, "tmp"), 0744)
