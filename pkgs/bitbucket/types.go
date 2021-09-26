@@ -19,58 +19,92 @@ type Response struct {
 
 type Error struct {
 	Context       string `json:"context"`
-	Message       string `json:"context"`
+	Message       string `json:"message"`
 	ExceptionName string `json:"exceptionName"`
 }
 
-type InboxPullRequest struct {
-	Id          int    `json:"id"`
+type PullRequest struct {
+	ID          int    `json:"id"`
 	Version     int    `json:"version"`
-	CreatedDate int64  `json:"createdDate"`
-	UpdatedDate int64  `json:"updatedDate"`
 	Title       string `json:"title"`
 	Description string `json:"description"`
+	State       string `json:"state"`
+	Open        bool   `json:"open"`
+	Closed      bool   `json:"closed"`
+	Locked      bool   `json:"locked"`
+	CreatedDate int64  `json:"createdDate"`
+	UpdatedDate int64  `json:"updatedDate"`
+	ClosedDate  int64  `json:"closedDate"`
 
-	Author InboxAuthor       `json:"author"`
-	To     InboxReference    `json:"toRef"`
-	Links  map[string][]Link `json:"links"`
+	FromRef      PullRequestReference     `json:"fromRef"`
+	ToRef        PullRequestReference     `json:"toRef"`
+	Author       PullRequestParticipant   `json:"author"`
+	Reviewers    []PullRequestParticipant `json:"reviewers"`
+	Participants []PullRequestParticipant `json:"participants"`
+	Properties   map[string]interface{}   `json:"properties"`
+	Links        RelatedLinks             `json:"links"`
 }
 
-type InboxAuthor struct {
-	User User `json:"user"`
+type PullRequestParticipant struct {
+	User               User   `json:"user"`
+	LastReviewedCommit string `json:"lastReviewedCommit"`
+	Role               string `json:"role"`
+	Approved           bool   `json:"approved"`
+	Status             string `json:"status"`
 }
 
-type User struct {
-	DisplayName  string `json:"displayName"`
-	EmailAddress string `json:"emailAddress"`
-}
-
-type InboxReference struct {
-	Repository Repository `json:"repository"`
+type PullRequestReference struct {
+	ID           string     `json:"id"`
+	DisplayID    string     `json:"displayId"`
+	LatestCommit string     `json:"latestCommit"`
+	Type         string     `json:"type"`
+	Repository   Repository `json:"repository"`
 }
 
 type Repository struct {
-	Slug    string  `json:"slug"`
-	Project Project `json:"project"`
+	Slug          string `json:"slug"`
+	ID            int    `json:"id"`
+	Name          string `json:"name"`
+	Description   string `json:"description"`
+	HierarchyID   string `json:"hierarchyId"`
+	ScmID         string `json:"scmId"`
+	State         string `json:"state"`
+	StatusMessage string `json:"statusMessage"`
+	Forkable      bool   `json:"forkable"`
+	// Origin        Repository `json:"origin"`
+	Project Project      `json:"project"`
+	Public  bool         `json:"public"`
+	Links   RelatedLinks `json:"links"`
 }
 
 type Project struct {
-	Key string `json:"key"`
+	Namespace string       `json:"namespace"`
+	Key       string       `json:"key"`
+	ID        int          `json:"id"`
+	Name      string       `json:"name"`
+	Public    bool         `json:"public"`
+	Type      string       `json:"type"`
+	Links     RelatedLinks `json:"links"`
+}
+
+type User struct {
+	Name         string       `json:"name"`
+	EmailAddress string       `json:"emailAddress"`
+	ID           int          `json:"id"`
+	DisplayName  string       `json:"displayName"`
+	Active       bool         `json:"active"`
+	Slug         string       `json:"slug"`
+	Type         string       `json:"type"`
+	Links        RelatedLinks `json:"links"`
+}
+
+type RelatedLinks struct {
+	Self        []Link `json:"self"`
+	Clone       []Link `json:"clone"`
+	MirrorClone []Link `json:"mirrorClone"`
 }
 
 type Link struct {
 	Href string `json:"href"`
-}
-
-type Activity struct {
-	Id          int     `json:"id"`
-	CreatedDate int64   `json:"createdDate"`
-	Action      string  `json:"action"`
-	Comment     Comment `json:"comment"`
-}
-
-type Comment struct {
-	Version int    `json:"version"`
-	Text    string `json:"text"`
-	Author  User   `json:"author"`
+	Name string `json:"name"`
 }
