@@ -10,8 +10,9 @@ import (
 )
 
 type Config struct {
-	API     *ConfigAPI `hcl:"api,block"`
-	Maildir string     `hcl:"maildir"`
+	API      *ConfigAPI `hcl:"api,block"`
+	Maildir  string     `hcl:"maildir"`
+	Database string     `hcl:"database"`
 }
 
 type ConfigAPI struct {

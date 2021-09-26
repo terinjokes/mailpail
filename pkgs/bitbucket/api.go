@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net/http"
+	"net/url"
 )
 
 type API struct {
@@ -30,8 +31,16 @@ func New(client Doer, endpoint, token string) *API {
 	}
 }
 
-func (a *API) Inbox(ctx context.Context) ([]InboxPullRequest, error) {
-	req, err := http.NewRequest("GET", a.api+"/inbox/pull-requests", nil)
+func (a *API) PullRequests(ctx context.Context, state string) ([]PullRequest, error) {
+	q := url.Values{}
+	q.Set("state", state)
+	u, err := url.Parse(a.api + "/dashboard/pull-requests")
+	if err != nil {
+		return nil, err
+	}
+	u.RawQuery = q.Encode()
+
+	req, err := http.NewRequest("GET", u.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -46,7 +55,7 @@ func (a *API) Inbox(ctx context.Context) ([]InboxPullRequest, error) {
 
 	var (
 		bbresp       Response
-		pullRequests []InboxPullRequest
+		pullRequests []PullRequest
 	)
 
 	if err := json.NewDecoder(resp.Body).Decode(&bbresp); err != nil {
@@ -77,34 +86,4 @@ func (a *API) Diff(ctx context.Context, proj, slug string, id int) ([]byte, erro
 	defer resp.Body.Close()
 
 	return ioutil.ReadAll(resp.Body)
-}
-
-func (a *API) Activities(ctx context.Context, proj, slug string, id int) ([]Activity, error) {
-	req, err := http.NewRequest("GET", a.api+fmt.Sprintf("/projects/%s/repos/%s/pull-requests/%d/activities", proj, slug, id), nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Add("Authorization", "Bearer "+a.token)
-
-	req = req.WithContext(ctx)
-	resp, err := a.client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	var (
-		bbresp     Response
-		activities []Activity
-	)
-
-	if err := json.NewDecoder(resp.Body).Decode(&bbresp); err != nil {
-		return nil, err
-	}
-
-	if err := json.Unmarshal(bbresp.Values, &activities); err != nil {
-		return nil, err
-	}
-
-	return activities, nil
 }

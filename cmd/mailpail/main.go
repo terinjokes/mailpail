@@ -5,20 +5,20 @@
 package main
 
 import (
-	"bufio"
 	"bytes"
 	"context"
+	"database/sql"
 	"fmt"
 	"net/http"
 	"net/mail"
 	"os"
 	"path/filepath"
-	"strconv"
 	"time"
 
 	"github.com/emersion/go-message/textproto"
-
+	_ "github.com/mattn/go-sqlite3"
 	"github.com/terinjokes/mailpail/pkgs/bitbucket"
+	"github.com/terinjokes/mailpail/pkgs/db"
 	"github.com/terinjokes/mailpail/pkgs/maildir"
 )
 
@@ -30,101 +30,6 @@ func FromUnixMilli(ms int64) time.Time {
 	return time.Unix(ms/int64(millisInSecond), (ms%int64(millisInSecond))*int64(nsInSecond))
 }
 
-func headers(filename string) (textproto.Header, error) {
-	f, err := os.Open(filename)
-	if err != nil {
-		return textproto.Header{}, nil
-	}
-	defer f.Close()
-
-	return textproto.ReadHeader(bufio.NewReader(f))
-}
-
-func createMailForItem(item bitbucket.InboxPullRequest, diff []byte) ([]byte, error) {
-	var message bytes.Buffer
-
-	to := &mail.Address{
-		Name:    item.Author.User.DisplayName,
-		Address: item.Author.User.EmailAddress,
-	}
-
-	var h textproto.Header
-	h.Set("From", to.String())
-	h.Set("Subject", fmt.Sprintf("[%s/%s #%d] %s", item.To.Repository.Project.Key, item.To.Repository.Slug, item.Id, item.Title))
-	h.Set("Date", FromUnixMilli(item.CreatedDate).Format(time.RFC1123Z))
-	h.Set("Message-Id", fmt.Sprintf("<%d.%s.%s@bitbucket.cfdata.org>", item.Id, item.To.Repository.Project.Key, item.To.Repository.Slug))
-	h.Set("Content-Location", item.Links["self"][0].Href)
-	h.Set("X-Bitbucket-Version", strconv.FormatInt(int64(item.Version), 10))
-	h.Set("Content-Type", "text/plain")
-
-	if err := textproto.WriteHeader(&message, h); err != nil {
-		return nil, err
-	}
-
-	message.Write([]byte(item.Description))
-	message.Write([]byte("\n\n---\n\n"))
-	message.Write(diff)
-	message.Write([]byte("-- \n"))
-
-	return message.Bytes(), nil
-}
-
-func createMailForComment(item bitbucket.InboxPullRequest, activity bitbucket.Activity) ([]byte, error) {
-	var message bytes.Buffer
-
-	to := &mail.Address{
-		Name:    activity.Comment.Author.DisplayName,
-		Address: activity.Comment.Author.EmailAddress,
-	}
-
-	var h textproto.Header
-	h.Set("From", to.String())
-	h.Set("Subject", fmt.Sprintf("Re: [%s/%s #%d] %s", item.To.Repository.Project.Key, item.To.Repository.Slug, item.Id, item.Title))
-	h.Set("Date", FromUnixMilli(activity.CreatedDate).Format(time.RFC1123Z))
-	h.Set("References", fmt.Sprintf("<%d.%s.%s@bitbucket.cfdata.org>", item.Id, item.To.Repository.Project.Key, item.To.Repository.Slug))
-	h.Set("In-Reply-To", fmt.Sprintf("<%d.%s.%s@bitbucket.cfdata.org>", item.Id, item.To.Repository.Project.Key, item.To.Repository.Slug))
-	h.Set("Message-Id", fmt.Sprintf("<%d.%d.%s.%s@bitbucket.cfdata.org>", activity.Id, item.Id, item.To.Repository.Project.Key, item.To.Repository.Slug))
-	h.Set("X-Bitbucket-Version", strconv.FormatInt(int64(activity.Comment.Version), 10))
-	h.Set("Content-Type", "text/plain")
-
-	if err := textproto.WriteHeader(&message, h); err != nil {
-		return nil, err
-	}
-
-	message.Write([]byte(activity.Comment.Text))
-
-	return message.Bytes(), nil
-}
-
-func inboxItemKeyFunc(item bitbucket.InboxPullRequest) string {
-	return fmt.Sprintf("%s.%s.pr.%d", item.To.Repository.Project.Key, item.To.Repository.Slug, item.Id)
-}
-
-func activityKeyFunc(item bitbucket.InboxPullRequest, activity bitbucket.Activity) string {
-	return fmt.Sprintf("%s.%s.activity.%d.%d", item.To.Repository.Project.Key, item.To.Repository.Slug, item.Id, activity.Id)
-}
-
-func writeArticle(dir maildir.Maildir, key string, article []byte) error {
-	art, err := dir.NewArticle(key)
-	if err != nil {
-		return err
-	}
-
-	n, err := art.Write(article)
-	switch {
-	case err != nil:
-		return err
-	case n != len(article):
-		return fmt.Errorf("truncated write wrote=%d expected=%d", n, len(article))
-	}
-
-	if err := art.Close(); err != nil {
-		return err
-	}
-
-	return nil
-}
-
 type UATransport struct {
 	rt http.RoundTripper
 }
@@ -134,9 +39,43 @@ func (u *UATransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	return u.rt.RoundTrip(req)
 }
 
+func pullRequestItemKeyFunc(pr bitbucket.PullRequest) string {
+	return fmt.Sprintf("%s.%s.pr.%d", pr.ToRef.Repository.Project.Key, pr.ToRef.Repository.Slug, pr.ID)
+}
+
+func articleForPullRequest(pr bitbucket.PullRequest, diff []byte) ([]byte, error) {
+	var message bytes.Buffer
+
+	to := &mail.Address{
+		Name:    pr.Author.User.DisplayName,
+		Address: pr.Author.User.EmailAddress,
+	}
+
+	var h textproto.Header
+	h.Set("From", to.String())
+	h.Set("Subject", fmt.Sprintf("[%s/%s #%d] %s", pr.ToRef.Repository.Project.Key, pr.ToRef.Repository.Slug, pr.ID, pr.Title))
+	h.Set("Date", FromUnixMilli(pr.CreatedDate).Format(time.RFC1123Z))
+	h.Set("Message-Id", fmt.Sprintf("<%s@bitbucket.cfdata.org>", pullRequestItemKeyFunc(pr)))
+	h.Set("Content-Location", pr.Links.Self[0].Href)
+	h.Set("Content-Type", "text/plain")
+
+	if err := textproto.WriteHeader(&message, h); err != nil {
+		return nil, err
+	}
+
+	// TODO: implement flow=reflow
+	message.Write([]byte(pr.Description))
+	message.Write([]byte("\n\n---\n\n"))
+	message.Write(diff)
+	message.Write([]byte("-- \n"))
+
+	return message.Bytes(), nil
+}
+
 func main() {
 	ctx := context.Background()
 
+	// TODO: make the location of this config file a flag option.
 	conf, err := LoadUserConfig()
 	if err != nil {
 		fmt.Printf("unable to load config file: %s\n", err)
@@ -149,109 +88,73 @@ func main() {
 		os.Exit(1)
 	}
 
+	sqldb, err := sql.Open("sqlite3", fmt.Sprintf("file:%s", conf.Database))
+	if err != nil {
+		fmt.Printf("unable to open database: %s\n", err)
+		os.Exit(-1)
+	}
+
+	// | id (PK) | project | repo | pr_id | last_activity |
+	sqldb.Exec("create table pulls (id integer not null primary key, project text, repo text, pr_id integer, last_activity integer);")
+
+	d := db.New(sqldb)
+
 	c := &http.Client{
 		Transport: &UATransport{rt: http.DefaultTransport},
 	}
 	api := bitbucket.New(c, conf.API.Endpoint, token)
 
-	dir := maildir.New(conf.Maildir)
+	md := maildir.New(conf.Maildir)
 	os.MkdirAll(filepath.Join(conf.Maildir, "tmp"), 0744)
 	os.MkdirAll(filepath.Join(conf.Maildir, "cur"), 0744)
 	os.MkdirAll(filepath.Join(conf.Maildir, "new"), 0744)
 
-	inbox, err := api.Inbox(ctx)
+	pullRequests, err := api.PullRequests(ctx, "open")
 	if err != nil {
-		fmt.Printf("error fetching inbox: %s\n", err)
+		fmt.Printf("error fetch pull requests: %s\n", err)
 	}
 
-	for _, item := range inbox {
-		existing, err := dir.Filename(inboxItemKeyFunc(item))
+	for _, pullRequest := range pullRequests {
+		var (
+			proj = pullRequest.ToRef.Repository.Project.Key
+			repo = pullRequest.ToRef.Repository.Slug
+			prID = pullRequest.ID
+		)
 
-		if err != nil && err.(*maildir.KeyError).N != 0 {
-			fmt.Printf("error finding existing pr mails: %s\n", err)
-			continue
-		}
-
-		if needsReviewArticle(item, existing) {
-			diff, err := api.Diff(ctx, item.To.Repository.Project.Key, item.To.Repository.Slug, item.Id)
-			if err != nil {
-				fmt.Printf("error fetching diff: %s\n", err)
-				continue
-			}
-
-			article, err := createMailForItem(item, diff)
-			if err != nil {
-				fmt.Printf("error creating article: %s\n", err)
-				continue
-			}
-
-			if existing != "" {
-				os.Remove(existing)
-			}
-
-			if err := writeArticle(dir, inboxItemKeyFunc(item), article); err != nil {
-				fmt.Printf("error writing article: %s\n", err)
-				continue
-			}
-		}
-
-		activities, err := api.Activities(ctx, item.To.Repository.Project.Key, item.To.Repository.Slug, item.Id)
+		exists, err := d.HasPullRequest(ctx, proj, repo, prID)
 		if err != nil {
-			fmt.Printf("error fetching activities: %s\n", err)
+			fmt.Printf("err: %s\n", err)
+			os.Exit(-1)
+		}
+
+		if exists {
+			fmt.Printf("skipping existing PR: %s/%s#%d\n", proj, repo, prID)
 			continue
 		}
 
-		for _, activity := range activities {
-			if activity.Action != "COMMENTED" {
-				continue
-			}
+		diff, err := api.Diff(ctx, pullRequest.ToRef.Repository.Project.Key, pullRequest.ToRef.Repository.Slug, pullRequest.ID)
+		if err != nil {
+			fmt.Printf("err fetching diff: %s\n", err)
+			os.Exit(-1)
+		}
 
-			article, err := createMailForComment(item, activity)
-			if err != nil {
-				fmt.Printf("error creating article: %s\n", err)
-				continue
-			}
+		article, _ := articleForPullRequest(pullRequest, diff)
 
-			existing, err := dir.Filename(activityKeyFunc(item, activity))
-			switch {
-			case err != nil && err.(*maildir.KeyError).N == 0:
-				if err := writeArticle(dir, activityKeyFunc(item, activity), article); err != nil {
-					fmt.Printf("error writing article: %s\n", err)
-					continue
-				}
-			case err != nil:
-				fmt.Printf("error finding existing activity mails: %s\n", err)
-				continue
-			case existing != "":
-				hdrs, err := headers(existing)
-				if err != nil {
-					fmt.Printf("error loading headers: %s\n", err)
-				}
+		art, err := md.NewArticle("t")
+		if err != nil {
+			fmt.Printf("err: %s\n", err)
+			os.Exit(-1)
+		}
+		defer art.Close()
 
-				version := hdrs.Get("X-Bitbucket-Version")
-				if version != strconv.FormatInt(int64(activity.Comment.Version), 10) {
-					os.Remove(existing)
+		if _, err := art.Write(article); err != nil {
+			fmt.Printf("err: %s\n", err)
+			os.Exit(-1)
+		}
 
-					if err := writeArticle(dir, activityKeyFunc(item, activity), article); err != nil {
-						fmt.Printf("error writing article: %s\n", err)
-						continue
-					}
-				}
-			}
+		if err := d.UpsertPullRequest(ctx, proj, repo, prID, 0); err != nil {
+			fmt.Printf("err: %s\n", err)
+			os.Exit(-1)
 		}
 	}
-}
-
-func needsReviewArticle(item bitbucket.InboxPullRequest, existing string) bool {
-	if existing == "" {
-		return true
-	}
-	hdrs, err := headers(existing)
-	if err != nil {
-		return true
-	}
-
-	version := hdrs.Get("X-Bitbucket-Version")
-
-	return version != strconv.FormatInt(int64(item.Version), 10)
 }
