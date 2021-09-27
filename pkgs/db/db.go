@@ -14,9 +14,15 @@ func New(db *sql.DB) *DB {
 	return &DB{db: db}
 }
 
+func prKey(project, repo string, id int) string {
+	return fmt.Sprintf("%s/%s/%d", project, repo, id)
+}
+
 func (db *DB) HasPullRequest(ctx context.Context, project, repo string, id int) (bool, error) {
 	var exists bool
-	row := db.db.QueryRowContext(ctx, "SELECT EXISTS(SELECT id FROM pulls WHERE project = ? AND repo = ? AND pr_id = ?)", project, repo, id)
+	key := prKey(project, repo, id)
+
+	row := db.db.QueryRowContext(ctx, "SELECT EXISTS(SELECT key FROM pulls WHERE key = ?)", key)
 	if err := row.Scan(&exists); err != nil {
 		return false, fmt.Errorf("determining if row exists: %w", err)
 	}
@@ -25,7 +31,8 @@ func (db *DB) HasPullRequest(ctx context.Context, project, repo string, id int) 
 }
 
 func (db *DB) LastActivity(ctx context.Context, project, repo string, id int) (lastActivity int, err error) {
-	row := db.db.QueryRowContext(ctx, "SELECT last_activity FROM pulls WHERE project = ? AND repo = ? AND pr_id = ?", project, repo, id)
+	key := prKey(project, repo, id)
+	row := db.db.QueryRowContext(ctx, "SELECT last_activity FROM pulls WHERE key = ?", key)
 	if err := row.Scan(&lastActivity); err != nil {
 		return 0, fmt.Errorf("determining last activity: %w", err)
 	}
@@ -34,8 +41,13 @@ func (db *DB) LastActivity(ctx context.Context, project, repo string, id int) (l
 }
 
 func (db *DB) UpsertPullRequest(ctx context.Context, project, repo string, id, lastActivty int) error {
-	_, err := db.db.ExecContext(ctx, "INSERT INTO pulls (project, repo, pr_id, last_activity) values (?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET last_activity = excluded.last_activity",
-		project, repo, id, lastActivty,
+	key := prKey(project, repo, id)
+	_, err := db.db.ExecContext(ctx, `
+INSERT INTO pulls (key, last_activity)
+VALUES (?, ?) ON CONFLICT(key) DO
+  UPDATE SET last_activity = excluded.last_activity
+`,
+		key, lastActivty,
 	)
 
 	if err != nil {

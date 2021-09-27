@@ -43,6 +43,15 @@ func pullRequestItemKeyFunc(pr bitbucket.PullRequest) string {
 	return fmt.Sprintf("%s.%s.pr.%d", pr.ToRef.Repository.Project.Key, pr.ToRef.Repository.Slug, pr.ID)
 }
 
+func pullRequestCommentKeyFunc(pr bitbucket.PullRequest, comment bitbucket.PullRequestComment) string {
+	return fmt.Sprintf("%s.%s.pr.%d.comment.%d",
+		pr.ToRef.Repository.Project.Key,
+		pr.ToRef.Repository.Slug,
+		pr.ID,
+		comment.ID,
+	)
+}
+
 func articleForPullRequest(pr bitbucket.PullRequest, diff []byte) ([]byte, error) {
 	var message bytes.Buffer
 
@@ -84,6 +93,7 @@ func articleForPullRequestComment(pr bitbucket.PullRequest, activity bitbucket.P
 	h.Set("From", from.String())
 	h.Set("Subject", fmt.Sprintf("Re: [%s/%s #%d] %s", pr.ToRef.Repository.Project.Key, pr.ToRef.Repository.Slug, pr.ID, pr.Title))
 	h.Set("Date", FromUnixMilli(pr.CreatedDate).Format(time.RFC1123Z))
+	h.Set("Message-Id", fmt.Sprintf("<%s@bitbucket.cfdata.org>", pullRequestCommentKeyFunc(pr, activity.Comment)))
 	h.Set("In-Reply-To", fmt.Sprintf("<%s@bitbucket.cfdata.org>", pullRequestItemKeyFunc(pr)))
 	h.Set("References", fmt.Sprintf("<%s@bitbucket.cfdata.org>", pullRequestItemKeyFunc(pr)))
 	h.Set("Content-Type", "text/plain")
@@ -113,16 +123,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	sqldb, err := sql.Open("sqlite3", fmt.Sprintf("file:%s", conf.Database))
+	deliveryDB, err := initDB(conf.Database)
 	if err != nil {
-		fmt.Printf("unable to open database: %s\n", err)
+		fmt.Printf("unable to create database: %s\n", err)
 		os.Exit(-1)
 	}
-
-	// | id (PK) | project | repo | pr_id | last_activity |
-	sqldb.Exec("create table pulls (id integer not null primary key, project text, repo text, pr_id integer, last_activity integer);")
-
-	d := db.New(sqldb)
 
 	c := &http.Client{
 		Transport: &UATransport{rt: http.DefaultTransport},
@@ -146,7 +151,7 @@ func main() {
 			prID = pullRequest.ID
 		)
 
-		exists, err := d.HasPullRequest(ctx, proj, repo, prID)
+		exists, err := deliveryDB.HasPullRequest(ctx, proj, repo, prID)
 		if err != nil {
 			fmt.Printf("err: %s\n", err)
 			os.Exit(-1)
@@ -173,13 +178,13 @@ func main() {
 				os.Exit(-1)
 			}
 
-			if err := d.UpsertPullRequest(ctx, proj, repo, prID, 0); err != nil {
+			if err := deliveryDB.UpsertPullRequest(ctx, proj, repo, prID, 0); err != nil {
 				fmt.Printf("err: %s\n", err)
 				os.Exit(-1)
 			}
 		}
 
-		lastActivity, err := d.LastActivity(ctx, proj, repo, prID)
+		lastActivity, err := deliveryDB.LastActivity(ctx, proj, repo, prID)
 		if err != nil {
 			fmt.Printf("err: %s\n", err)
 			os.Exit(-1)
@@ -209,7 +214,7 @@ func main() {
 						os.Exit(-1)
 					}
 
-					if err := d.UpsertPullRequest(ctx, proj, repo, prID, activity.ID); err != nil {
+					if err := deliveryDB.UpsertPullRequest(ctx, proj, repo, prID, activity.ID); err != nil {
 						fmt.Printf("err: %s\n", err)
 						os.Exit(-1)
 					}
@@ -223,4 +228,21 @@ func main() {
 			}
 		}
 	}
+}
+
+func initDB(file string) (*db.DB, error) {
+	d, err := sql.Open("sqlite3", fmt.Sprintf("file:%s", file))
+	if err != nil {
+		fmt.Printf("unable to open database: %s\n", err)
+		os.Exit(-1)
+	}
+
+	d.Exec(`
+CREATE TABLE IF NOT EXISTS pulls (
+  key TEXT NOT NULL PRIMARY KEY,
+  last_activity INTEGER
+);
+`)
+
+	return db.New(d), nil
 }
