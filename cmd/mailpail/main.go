@@ -72,6 +72,31 @@ func articleForPullRequest(pr bitbucket.PullRequest, diff []byte) ([]byte, error
 	return message.Bytes(), nil
 }
 
+func articleForPullRequestComment(pr bitbucket.PullRequest, activity bitbucket.PullRequestActivity) ([]byte, error) {
+	var message bytes.Buffer
+
+	from := &mail.Address{
+		Name:    activity.User.DisplayName,
+		Address: activity.User.EmailAddress,
+	}
+
+	var h textproto.Header
+	h.Set("From", from.String())
+	h.Set("Subject", fmt.Sprintf("Re: [%s/%s #%d] %s", pr.ToRef.Repository.Project.Key, pr.ToRef.Repository.Slug, pr.ID, pr.Title))
+	h.Set("Date", FromUnixMilli(pr.CreatedDate).Format(time.RFC1123Z))
+	h.Set("In-Reply-To", fmt.Sprintf("<%s@bitbucket.cfdata.org>", pullRequestItemKeyFunc(pr)))
+	h.Set("References", fmt.Sprintf("<%s@bitbucket.cfdata.org>", pullRequestItemKeyFunc(pr)))
+	h.Set("Content-Type", "text/plain")
+
+	if err := textproto.WriteHeader(&message, h); err != nil {
+		return nil, err
+	}
+
+	message.Write([]byte(activity.Comment.Text))
+
+	return message.Bytes(), nil
+}
+
 func main() {
 	ctx := context.Background()
 
@@ -127,34 +152,75 @@ func main() {
 			os.Exit(-1)
 		}
 
-		if exists {
-			fmt.Printf("skipping existing PR: %s/%s#%d\n", proj, repo, prID)
-			continue
+		if !exists {
+			diff, err := api.Diff(ctx, pullRequest.ToRef.Repository.Project.Key, pullRequest.ToRef.Repository.Slug, pullRequest.ID)
+			if err != nil {
+				fmt.Printf("err fetching diff: %s\n", err)
+				os.Exit(-1)
+			}
+
+			article, _ := articleForPullRequest(pullRequest, diff)
+
+			art, err := md.NewArticle("t")
+			if err != nil {
+				fmt.Printf("err: %s\n", err)
+				os.Exit(-1)
+			}
+			defer art.Close()
+
+			if _, err := art.Write(article); err != nil {
+				fmt.Printf("err: %s\n", err)
+				os.Exit(-1)
+			}
+
+			if err := d.UpsertPullRequest(ctx, proj, repo, prID, 0); err != nil {
+				fmt.Printf("err: %s\n", err)
+				os.Exit(-1)
+			}
 		}
 
-		diff, err := api.Diff(ctx, pullRequest.ToRef.Repository.Project.Key, pullRequest.ToRef.Repository.Slug, pullRequest.ID)
+		lastActivity, err := d.LastActivity(ctx, proj, repo, prID)
 		if err != nil {
-			fmt.Printf("err fetching diff: %s\n", err)
+			fmt.Printf("err: %s\n", err)
 			os.Exit(-1)
 		}
 
-		article, _ := articleForPullRequest(pullRequest, diff)
+		fmt.Printf("lastActivity: %d\n", lastActivity)
 
-		art, err := md.NewArticle("t")
+		activities, err := api.PullRequestActivities(ctx, proj, repo, prID)
 		if err != nil {
 			fmt.Printf("err: %s\n", err)
 			os.Exit(-1)
 		}
-		defer art.Close()
 
-		if _, err := art.Write(article); err != nil {
-			fmt.Printf("err: %s\n", err)
-			os.Exit(-1)
-		}
+		for _, activity := range activities {
+			switch activity.Action {
+			case "COMMENTED":
+				if activity.ID > lastActivity {
+					article, _ := articleForPullRequestComment(pullRequest, activity)
+					art, err := md.NewArticle("t")
+					if err != nil {
+						fmt.Printf("err: %s\n", err)
+						os.Exit(-1)
+					}
 
-		if err := d.UpsertPullRequest(ctx, proj, repo, prID, 0); err != nil {
-			fmt.Printf("err: %s\n", err)
-			os.Exit(-1)
+					if _, err := art.Write(article); err != nil {
+						fmt.Printf("err: %s\n", err)
+						os.Exit(-1)
+					}
+
+					if err := d.UpsertPullRequest(ctx, proj, repo, prID, activity.ID); err != nil {
+						fmt.Printf("err: %s\n", err)
+						os.Exit(-1)
+					}
+
+					art.Close()
+				}
+
+				// TODO: check recursively for new comments under activity.Comments.Comments
+			default:
+				fmt.Printf("skipping unknown action: %s\n", activity.Action)
+			}
 		}
 	}
 }

@@ -24,6 +24,15 @@ func (db *DB) HasPullRequest(ctx context.Context, project, repo string, id int) 
 	return exists, nil
 }
 
+func (db *DB) LastActivity(ctx context.Context, project, repo string, id int) (lastActivity int, err error) {
+	row := db.db.QueryRowContext(ctx, "SELECT last_activity FROM pulls WHERE project = ? AND repo = ? AND pr_id = ?", project, repo, id)
+	if err := row.Scan(&lastActivity); err != nil {
+		return 0, fmt.Errorf("determining last activity: %w", err)
+	}
+
+	return lastActivity, nil
+}
+
 func (db *DB) UpsertPullRequest(ctx context.Context, project, repo string, id, lastActivty int) error {
 	_, err := db.db.ExecContext(ctx, "INSERT INTO pulls (project, repo, pr_id, last_activity) values (?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET last_activity = excluded.last_activity",
 		project, repo, id, lastActivty,

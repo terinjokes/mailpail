@@ -108,3 +108,24 @@ type Link struct {
 	Href string `json:"href"`
 	Name string `json:"name"`
 }
+
+type PullRequestActivity struct {
+	ID          int    `json:"id"`
+	Action      string `json:"action"`
+	CreatedDate int64  `json:"createdDate"`
+	User        User   `json:"user"`
+
+	CommentAction string             `json:"commentAction"`
+	Comment       PullRequestComment `json:"comment"`
+}
+
+type PullRequestComment struct {
+	Author       User                   `json:"author"`
+	ID           int                    `json:"id"`
+	CreatedDated int64                  `json:"createdDate"`
+	UpdatedDate  int64                  `json:"updatedDate"`
+	Text         string                 `json:"text"`
+	HTML         string                 `json:"html"`
+	Comments     []PullRequestComment   `json:"comments"`
+	Properties   map[string]interface{} `json:"properties"`
+}

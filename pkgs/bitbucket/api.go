@@ -69,6 +69,36 @@ func (a *API) PullRequests(ctx context.Context, state string) ([]PullRequest, er
 	return pullRequests, nil
 }
 
+func (a *API) PullRequestActivities(ctx context.Context, proj, slug string, id int) ([]PullRequestActivity, error) {
+	req, err := http.NewRequest("GET", a.api+fmt.Sprintf("/projects/%s/repos/%s/pull-requests/%d/activities", proj, slug, id), nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Add("Authorization", "Bearer "+a.token)
+
+	req = req.WithContext(ctx)
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var (
+		bbresp     Response
+		activities []PullRequestActivity
+	)
+
+	if err := json.NewDecoder(resp.Body).Decode(&bbresp); err != nil {
+		return nil, err
+	}
+
+	if err := json.Unmarshal(bbresp.Values, &activities); err != nil {
+		return nil, err
+	}
+
+	return activities, nil
+}
+
 func (a *API) Diff(ctx context.Context, proj, slug string, id int) ([]byte, error) {
 	req, err := http.NewRequest("GET", a.api+fmt.Sprintf("/projects/%s/repos/%s/pull-requests/%d/diff", proj, slug, id), nil)
 
