@@ -17,3 +17,7 @@ This can be installed with a Go installation.
 #+BEGIN_EXAMPLE
 go install github.com/terinjokes/mailpail
 #+END_EXAMPLE
+
+* Related Projects
+
+- [[https://github.com/holygeek/fetchpost][holygeek/fetchpost]]: Preserve Hacker News posts and comments as maildir.
