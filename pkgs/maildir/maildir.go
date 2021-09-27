@@ -7,68 +7,25 @@ package maildir
 import (
 	"os"
 	"path/filepath"
-	"strings"
-
-	"github.com/luksen/maildir"
 )
 
-type Maildir struct {
-	maildir.Dir
-}
+type Maildir string
 
-type KeyError = maildir.KeyError
-
-func New(dir string) Maildir {
-	return Maildir{Dir: maildir.Dir(dir)}
-}
-
-func (d Maildir) NewArticle(key string) (*Article, error) {
-	ks, err := keySuffix()
+func (d Maildir) NewArticle() (*Article, error) {
+	fn, err := uniqueFilename()
 	if err != nil {
 		return nil, err
 	}
 
-	key = key + "." + ks
-
 	art := &Article{}
-	file, err := os.Create(filepath.Join(string(d.Dir), "tmp", key))
+	file, err := os.Create(filepath.Join(string(d), "tmp", fn))
 	if err != nil {
 		return nil, err
 	}
 
 	art.file = file
+	art.filename = fn
 	art.d = d
-	art.key = key
 
 	return art, nil
-}
-
-// Filename returns the path to the file corresponding to the key.
-func (d Maildir) Filename(key string) (string, error) {
-	n := 0
-	var matchedFile string
-	for _, dir := range []string{"cur", "new"} {
-		dirPath := filepath.Join(string(d.Dir), dir)
-		f, err := os.Open(dirPath)
-		if err != nil {
-			return "", err
-		}
-		defer f.Close()
-		names, err := f.Readdirnames(-1)
-		if err != nil {
-			return "", err
-		}
-		for _, name := range names {
-			if strings.HasPrefix(name, key) {
-				if n == 0 {
-					matchedFile = filepath.Join(dirPath, name)
-				}
-				n++
-			}
-		}
-	}
-	if n != 1 {
-		return "", &maildir.KeyError{Key: key, N: n}
-	}
-	return matchedFile, nil
 }

@@ -134,7 +134,7 @@ func main() {
 	}
 	api := bitbucket.New(c, conf.API.Endpoint, token)
 
-	md := maildir.New(conf.Maildir)
+	md := maildir.Maildir(conf.Maildir)
 	os.MkdirAll(filepath.Join(conf.Maildir, "tmp"), 0744)
 	os.MkdirAll(filepath.Join(conf.Maildir, "cur"), 0744)
 	os.MkdirAll(filepath.Join(conf.Maildir, "new"), 0744)
@@ -166,7 +166,7 @@ func main() {
 
 			article, _ := articleForPullRequest(pullRequest, diff)
 
-			art, err := md.NewArticle("t")
+			art, err := md.NewArticle()
 			if err != nil {
 				fmt.Printf("err: %s\n", err)
 				os.Exit(-1)
@@ -203,7 +203,7 @@ func main() {
 			case "COMMENTED":
 				if activity.ID > lastActivity {
 					article, _ := articleForPullRequestComment(pullRequest, activity)
-					art, err := md.NewArticle("t")
+					art, err := md.NewArticle()
 					if err != nil {
 						fmt.Printf("err: %s\n", err)
 						os.Exit(-1)

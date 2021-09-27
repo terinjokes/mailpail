@@ -10,9 +10,9 @@ import (
 )
 
 type Article struct {
-	file *os.File
-	d    Maildir
-	key  string
+	file     *os.File
+	filename string
+	d        Maildir
 }
 
 func (a Article) Write(p []byte) (int, error) {
@@ -26,8 +26,8 @@ func (a Article) Close() error {
 	}
 
 	var (
-		t = filepath.Join(string(a.d.Dir), "tmp", a.key)
-		n = filepath.Join(string(a.d.Dir), "new", a.key)
+		t = filepath.Join(string(a.d), "tmp", a.filename)
+		n = filepath.Join(string(a.d), "new", a.filename)
 	)
 
 	if err := os.Link(t, n); err != nil {
@@ -46,7 +46,7 @@ func (a Article) Abort() error {
 		return err
 	}
 
-	if err := os.Remove(filepath.Join(string(a.d.Dir), "tmp", a.key)); err != nil {
+	if err := os.Remove(filepath.Join(string(a.d), "tmp", a.filename)); err != nil {
 		return err
 	}
 
