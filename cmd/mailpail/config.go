@@ -6,19 +6,19 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/hashicorp/hcl/v2/hclsimple"
+	"olympos.io/encoding/edn"
 )
 
 type Config struct {
-	API      *ConfigAPI `hcl:"api,block"`
-	Maildir  string     `hcl:"maildir"`
-	Database string     `hcl:"database"`
+	API      ConfigAPI `edn:"api"`
+	Maildir  string    `edn:"maildir"`
+	Database string    `edn:"database"`
 }
 
 type ConfigAPI struct {
-	Endpoint  string `hcl:"endpoint"`
-	Token     string `hcl:"token,optional"`
-	TokenFile string `hcl:"tokenFile,optional"`
+	Endpoint  string `edn:"endpoint"`
+	Token     string `edn:"token,omitempty"`
+	TokenFile string `edn:"tokenFile,omitempty"`
 }
 
 func (c Config) Token() (string, error) {
@@ -44,28 +44,21 @@ func LoadUserConfig() (Config, error) {
 	}
 	configDir = filepath.Join(configDir, "mailpail")
 
-	files := []string{"mailpail.hcl", "mailpail.json"}
-
 	var conf Config
-	for _, file := range files {
-		name := filepath.Join(configDir, file)
-		fi, err := os.Stat(name)
+	name := filepath.Join(configDir, "mailpail.edn")
+	f, err := os.Open(name)
 
-		switch {
-		case os.IsNotExist(err):
-			continue
-		case err != nil:
-			return Config{}, err
-		case !fi.Mode().IsRegular():
-			return Config{}, fmt.Errorf("file is not a regular file: %s", name)
-		}
-
-		if err := hclsimple.DecodeFile(filepath.Join(configDir, file), nil, &conf); err != nil {
-			continue
-		}
-
-		return conf, nil
+	switch {
+	case os.IsNotExist(err):
+		return Config{}, fmt.Errorf("file %q does not exist", name)
+	case err != nil:
+		return Config{}, fmt.Errorf("unable to open file: %w", err)
 	}
 
-	return Config{}, fmt.Errorf("unable to load configuration files")
+	dec := edn.NewDecoder(f)
+	if err := dec.Decode(&conf); err != nil {
+		return Config{}, fmt.Errorf("unable to parse EDN: %w", err)
+	}
+
+	return conf, nil
 }
